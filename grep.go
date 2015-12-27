@@ -16,26 +16,29 @@ import (
 )
 
 var (
-	opts = &options{}
+	opts = &Options{}
 
-	yellow = color.New(color.FgBlack, color.BgYellow).SprintfFunc()
+	yellowBg = color.New(color.FgBlack, color.BgYellow).SprintfFunc()
 )
 
 func init() {
-	getopt.BoolVarLong(&opts.useRegex, "regexp", 'R', "match pattern as regexp")
-	getopt.BoolVar(&opts.noCase, 'i', "ignore case when searching")
-	getopt.BoolVarLong(&opts.listFiles, "list", 'l', "only list files where match is found")
+	getopt.BoolVarLong(&opts.UseRegex, "regexp", 'R', "match pattern as regexp")
+	getopt.BoolVar(&opts.NoCase, 'i', "ignore case when searching")
+	getopt.BoolVarLong(&opts.ListFiles, "list", 'l', "only list files where match is found")
 }
 
 func main() {
-	// var opts options
 	pattern, files := parseArgs()
-	var wg sync.WaitGroup
 
+	wg := &sync.WaitGroup{}
 	wg.Add(len(files))
+
 	for _, _file := range files {
 		go func(f string) {
-			processFile(f, pattern)
+			results := processFile(f, pattern)
+			if results != "" {
+				println(results)
+			}
 			wg.Done()
 		}(_file)
 	}
@@ -43,31 +46,32 @@ func main() {
 	wg.Wait()
 }
 
-func processFile(_file string, pattern string) {
+func processFile(_file string, pattern string) string {
 	if _, err := os.Stat(_file); os.IsNotExist(err) {
-		println("file does not exist or you do not have permission to access it:", _file)
-		return
+		println("ERROR: file does not exist or you do not have permission to open it:", _file)
+		return ""
 	}
 	matches := make(chan *Match)
 
 	go grepFile(_file, pattern, matches)
 
-	if opts.listFiles {
+	if opts.ListFiles {
 		if <-matches != nil {
-			println(_file)
-			return
+			return _file
 		}
 	}
 
-	first := true
+	result := fmt.Sprintf("%s:\n", color.CyanString(_file))
+	hasMatches := false
 	for match := range matches {
-		if first {
-			println()
-			fmt.Printf("%s:\n", color.CyanString(_file))
-			first = false
-		}
-		print(fmt.Sprintf("    %s: %s", color.YellowString(strconv.Itoa(match.Num)), match.Line))
+		hasMatches = true
+		result += fmt.Sprintf("    %s: %s", color.YellowString(strconv.Itoa(match.Line)), match.LineText)
 	}
+	if hasMatches {
+		return result
+	}
+
+	return ""
 }
 
 func parseArgs() (pattern string, files []string) {
@@ -91,29 +95,29 @@ func parseArgs() (pattern string, files []string) {
 }
 
 func grepFile(_file string, pattern string, to chan<- *Match) {
-	linesChan := make(chan *Line)
+	linesChan := make(chan *FileLine)
 	go readFile(_file, linesChan)
 
 	for line := range linesChan {
-		if opts.noCase {
+		if opts.NoCase {
 			line.Text = strings.ToLower(line.Text)
 			pattern = strings.ToLower(pattern)
 		}
-		if opts.useRegex {
+		if opts.UseRegex {
 			r := regexp.MustCompile(pattern)
 			finds := r.FindAllString(line.Text, -1)
 			if finds != nil {
-				to <- &Match{Num: line.Num, MatchStr: finds[0], Line: line.Text}
+				to <- &Match{Line: line.Num, MatchStr: finds[0], LineText: line.Text}
 			}
 		} else if strings.Contains(line.Text, pattern) {
-			to <- &Match{Num: line.Num, MatchStr: pattern, Line: line.Text}
+			to <- &Match{Line: line.Num, MatchStr: pattern, LineText: line.Text}
 		}
 	}
 
 	close(to)
 }
 
-func readFile(_file string, to chan<- *Line) {
+func readFile(_file string, to chan<- *FileLine) {
 	f, err := os.Open(_file)
 	if err != nil {
 		log.Panic(err)
@@ -125,7 +129,7 @@ func readFile(_file string, to chan<- *Line) {
 	for {
 		line, er := freader.ReadBytes('\n')
 		if er == nil {
-			to <- &Line{Num: i, Text: string(line)}
+			to <- &FileLine{Num: i, Text: string(line)}
 		} else {
 			break
 		}
@@ -134,37 +138,22 @@ func readFile(_file string, to chan<- *Line) {
 	close(to)
 }
 
-// func grepLine(pattern string, from <-chan string, result chan<- bool) {
-// 	var wg sync.WaitGroup
-
-// 	for line := range from {
-// 		wg.Add(1)
-
-// 		go func(l string) {
-// 			defer wg.Done()
-// 			if strings.Contains(l, pattern) {
-// 				result <- true
-// 			}
-// 		}(string(line))
-// 	}
-
-// 	wg.Wait()
-// 	close(result)
-// }
-
-type options struct {
-	useRegex  bool
-	noCase    bool
-	listFiles bool
+// Options from the command line
+type Options struct {
+	UseRegex  bool
+	NoCase    bool
+	ListFiles bool
 }
 
-type Line struct {
+// FileLine is a line from a file
+type FileLine struct {
 	Text string
 	Num  int
 }
 
+// Match is a matching line from a file
 type Match struct {
-	Num      int
+	Line     int
 	MatchStr string
-	Line     string
+	LineText string
 }
