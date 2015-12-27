@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -11,98 +10,107 @@ import (
 	"strings"
 	"sync"
 
+	"code.google.com/p/getopt"
+
 	"github.com/fatih/color"
 )
 
 var (
-	useRegex bool
+	opts = &options{}
 
 	yellow = color.New(color.FgBlack, color.BgYellow).SprintfFunc()
 )
 
 func init() {
-	flag.BoolVar(&useRegex, "regexp", false, "match pattern as regexp")
+	getopt.BoolVarLong(&opts.useRegex, "regexp", 'R', "match pattern as regexp")
+	getopt.BoolVar(&opts.noCase, 'i', "ignore case when searching")
+	getopt.BoolVarLong(&opts.listFiles, "list", 'l', "only list files where match is found")
 }
 
 func main() {
 	// var opts options
-	pat, files := parseArgs()
+	pattern, files := parseArgs()
 	var wg sync.WaitGroup
-
-	resultChan := make(chan string)
 
 	wg.Add(len(files))
 	for _, _file := range files {
 		go func(f string) {
-			if _, err := os.Stat(f); os.IsNotExist(err) {
-				println("file does not exist or you do not have permission to access it:", f)
-			} else {
-				grepFile(f, pat, resultChan)
-			}
+			processFile(f, pattern)
 			wg.Done()
 		}(_file)
 	}
 
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
+	wg.Wait()
+}
 
-	for res := range resultChan {
-		println(res)
+func processFile(_file string, pattern string) {
+	if _, err := os.Stat(_file); os.IsNotExist(err) {
+		println("file does not exist or you do not have permission to access it:", _file)
+		return
+	}
+	matches := make(chan *Match)
+
+	go grepFile(_file, pattern, matches)
+
+	if opts.listFiles {
+		if <-matches != nil {
+			println(_file)
+			return
+		}
 	}
 
+	first := true
+	for match := range matches {
+		if first {
+			println()
+			fmt.Printf("%s:\n", color.CyanString(_file))
+			first = false
+		}
+		print(fmt.Sprintf("    %s: %s", color.YellowString(strconv.Itoa(match.Num)), match.Line))
+	}
 }
 
-// func makeFlags() {
-// 	flags.
-// }
+func parseArgs() (pattern string, files []string) {
+	getopt.Parse()
+	args := getopt.Args()
 
-func parseArgs() (pat string, files []string) {
-	flag.Parse()
-	args := flag.Args()
+	if len(args) < 2 {
+		// println("usage: grep [-abcDEFGHhIiJLlmnOoqRSsUVvwxZ] [-A num] [-B num] [-C[num]]")
+		// println("        [-e pattern] [-f file] [--binary-files=value] [--color=when]")
+		// println("        [--context[=num]] [--directories=action] [--label] [--line-buffered]")
+		// println("        [--null] [pattern] [file ...]")
+		getopt.Usage()
+		os.Exit(1)
+	}
+
 	return args[0], args[1:]
-	// if len(os.Args) < 3 {
-	// 	println("usage: grep [-abcDEFGHhIiJLlmnOoqRSsUVvwxZ] [-A num] [-B num] [-C[num]]")
-	// 	println("        [-e pattern] [-f file] [--binary-files=value] [--color=when]")
-	// 	println("        [--context[=num]] [--directories=action] [--label] [--line-buffered]")
-	// 	println("        [--null] [pattern] [file ...]")
-	// 	os.Exit(1)
-	// }
 
-	// pat = os.Args[1]
+	// pattern = os.Args[1]
 	// files = os.Args[2:]
-	// return files, pat
+	// return files, pattern
 }
 
-func getFiles(files []string, to chan<- string) {
-}
-
-func grepFile(_file string, pat string, to chan<- string) {
-	var foundLines = ""
+func grepFile(_file string, pattern string, to chan<- *Match) {
 	linesChan := make(chan *Line)
 	go readFile(_file, linesChan)
 
 	for line := range linesChan {
-		if useRegex {
-			r := regexp.MustCompile(pat)
-			if r.MatchString(line.Text) {
-				num := color.YellowString(strconv.Itoa(line.Num))
-				// text := r.ReplaceAllString(line.Text, yellow(pat))
-				text := line.Text
-				foundLines += fmt.Sprintf("    %s: %s", num, text)
+		if opts.noCase {
+			line.Text = strings.ToLower(line.Text)
+			pattern = strings.ToLower(pattern)
+		}
+		if opts.useRegex {
+			r := regexp.MustCompile(pattern)
+			finds := r.FindAllString(line.Text, -1)
+			if finds != nil {
+				to <- &Match{Num: line.Num, MatchStr: finds[0], Line: line.Text}
 			}
-		} else if strings.Contains(line.Text, pat) {
-			num := color.YellowString(strconv.Itoa(line.Num))
-			text := strings.Replace(line.Text, pat, yellow(pat), -1)
-			foundLines += fmt.Sprintf("    %s: %s", num, text)
+		} else if strings.Contains(line.Text, pattern) {
+			to <- &Match{Num: line.Num, MatchStr: pattern, Line: line.Text}
 		}
 	}
 
-	if foundLines != "" {
-		fileColor := color.CyanString(_file)
-		to <- fmt.Sprintf("%s: \n%s\n", fileColor, foundLines)
-	}
+	close(to)
 }
 
 func readFile(_file string, to chan<- *Line) {
@@ -126,7 +134,7 @@ func readFile(_file string, to chan<- *Line) {
 	close(to)
 }
 
-// func grepLine(pat string, from <-chan string, result chan<- bool) {
+// func grepLine(pattern string, from <-chan string, result chan<- bool) {
 // 	var wg sync.WaitGroup
 
 // 	for line := range from {
@@ -134,7 +142,7 @@ func readFile(_file string, to chan<- *Line) {
 
 // 		go func(l string) {
 // 			defer wg.Done()
-// 			if strings.Contains(l, pat) {
+// 			if strings.Contains(l, pattern) {
 // 				result <- true
 // 			}
 // 		}(string(line))
@@ -145,9 +153,18 @@ func readFile(_file string, to chan<- *Line) {
 // }
 
 type options struct {
+	useRegex  bool
+	noCase    bool
+	listFiles bool
 }
 
 type Line struct {
-	Num  int
 	Text string
+	Num  int
+}
+
+type Match struct {
+	Num      int
+	MatchStr string
+	Line     string
 }
