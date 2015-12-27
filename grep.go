@@ -59,6 +59,8 @@ func processFile(_file string, pattern string) string {
 		if <-matches != nil {
 			return _file
 		}
+		// channel was close without any results so there is no match
+		return ""
 	}
 
 	result := fmt.Sprintf("%s:\n", color.CyanString(_file))
