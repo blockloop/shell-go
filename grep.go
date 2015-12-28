@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"code.google.com/p/getopt"
-
 	"github.com/fatih/color"
 )
 
@@ -67,7 +66,9 @@ func processFile(_file string, pattern string) string {
 	hasMatches := false
 	for match := range matches {
 		hasMatches = true
-		result += fmt.Sprintf("    %s: %s", color.YellowString(strconv.Itoa(match.Line)), match.LineText)
+		lineNum := color.YellowString(strconv.Itoa(match.Line))
+		text := strings.Replace(match.LineText, match.MatchStr, yellowBg(match.MatchStr), -1)
+		result += fmt.Sprintf("    %s: %s", lineNum, text)
 	}
 	if hasMatches {
 		return result
