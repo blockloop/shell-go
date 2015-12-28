@@ -24,6 +24,7 @@ func init() {
 	getopt.BoolVarLong(&opts.UseRegex, "regexp", 'R', "match pattern as regexp")
 	getopt.BoolVar(&opts.NoCase, 'i', "ignore case when searching")
 	getopt.BoolVarLong(&opts.ListFiles, "list", 'l', "only list files where match is found")
+	getopt.BoolVarLong(&color.NoColor, "no-color", 'c', "don't colorize anything")
 }
 
 func main() {
