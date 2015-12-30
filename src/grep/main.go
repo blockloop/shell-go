@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"container/ring"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -113,26 +112,16 @@ func parseArgs() (pattern string, files []string) {
 		os.Exit(0)
 	}
 
-	if opts.ShowHelp || len(args) < 2 {
-		// fmt.Println("usage: grep [-abcDEFGHhIiJLlmnOoqRSsUVvwxZ] [-A num] [-B num] [-C[num]]")
-		// fmt.Println("        [-e pattern] [-f file] [--binary-files=value] [--color=when]")
-		// fmt.Println("        [--context[=num]] [--directories=action] [--label] [--line-buffered]")
-		// fmt.Println("        [--null] [pattern] [file ...]")
+	if opts.ShowHelp {
 		getopt.Usage()
 		os.Exit(0)
 	}
+	if len(args) < 2 {
+		getopt.Usage()
+		os.Exit(1)
+	}
 
 	return args[0], args[1:]
-
-	// pattern = os.Args[1]
-	// files = os.Args[2:]
-	// return files, pattern
-}
-
-func printContextualMatch(from <-chan *Match) {
-}
-
-func printMatch(from <-chan *contextualLine) {
 }
 
 func grepFile(file string, pattern string, to chan<- *Match) {
@@ -149,10 +138,9 @@ func grepFile(file string, pattern string, to chan<- *Match) {
 		// 	pattern = strings.ToLower(pattern)
 		// }
 		if line == nil || line.Current == nil {
-			debug("line is nil")
 			continue
 		}
-		debug("searching", line.Current.Text)
+
 		if opts.UseRegex {
 			r := regexp.MustCompile(pattern)
 			finds := r.FindAllString(line.Current.Text, -1)
@@ -283,10 +271,4 @@ type Match struct {
 	MatchStr    string
 	LinesBefore []*FileLine
 	LinesAfter  []*FileLine
-}
-
-func debug(v ...interface{}) {
-	if opts.Debug {
-		log.Println(v)
-	}
 }
