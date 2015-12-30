@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -82,7 +81,7 @@ func processFile(file *os.File, pattern string) {
 			}
 		}
 
-		lineNum := color.YellowString(strconv.Itoa(match.Line.Num))
+		lineNum := color.YellowString("%d", match.Line.Num)
 		text := strings.Replace(match.Line.Text, match.MatchStr, yellowBg(match.MatchStr), -1)
 		result += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
 
