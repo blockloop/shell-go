@@ -78,19 +78,16 @@ func processFile(file *os.File, pattern string) {
 
 		for _, l := range match.LinesBefore {
 			if l != nil {
-				// TODO trim line and add line ending
 				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
 			}
 		}
 
 		lineNum := color.YellowString(strconv.Itoa(match.Line.Num))
 		text := strings.Replace(match.Line.Text, match.MatchStr, yellowBg(match.MatchStr), -1)
-		// TODO trim line and add line ending
 		result += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
 
 		for _, l := range match.LinesAfter {
 			if l != nil {
-				// TODO trim line and add line ending
 				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
 			}
 		}
@@ -108,9 +105,9 @@ func parseArgs() (pattern string, files []*os.File) {
 
 	if opts.ShowVersion {
 		fmt.Println("grep-go")
-		fmt.Println("    version: 1.0")
-		fmt.Println("    author: Brett Jones")
-		fmt.Println("    source: https://github.com/blockloop/shell-go")
+		fmt.Println("version: 1.0")
+		fmt.Println("author: Brett Jones")
+		fmt.Println("source: https://github.com/blockloop/shell-go")
 		os.Exit(0)
 	}
 
@@ -120,7 +117,7 @@ func parseArgs() (pattern string, files []*os.File) {
 	}
 	if len(args) == 0 {
 		getopt.Usage()
-		os.Exit(1)
+		os.Exit(0)
 	}
 	if len(args) == 1 {
 		isStdin = true
@@ -145,51 +142,41 @@ func grepFile(file *os.File, pattern string, to chan<- *Match) {
 	go readContextualFile(file, opts.Context, linesChan)
 
 	for line := range linesChan {
-		// TODO this breaks because the output is downcase. need to preserve case while searching
-		// if opts.NoCase {
-		// 	line.Text = strings.ToLower(line.Text)
-		// 	pattern = strings.ToLower(pattern)
-		// }
 		if line == nil || line.Current == nil {
 			continue
 		}
 
-		if opts.UseRegex {
-			r := regexp.MustCompile(pattern)
-			finds := r.FindAllString(line.Current.Text, -1)
-			if finds != nil {
-				to <- &Match{
-					MatchStr:    finds[0],
-					LinesBefore: line.LinesBefore,
-					LinesAfter:  line.LinesAfter,
-					Line: &FileLine{
-						Text: line.Current.Text,
-						Num:  line.Current.Num,
-					},
-				}
-			}
-		} else {
-			var isMatch bool
-			if opts.NoCase {
-				isMatch = strings.Contains(strings.ToLower(line.Current.Text), strings.ToLower(pattern))
-			} else {
-				isMatch = strings.Contains(line.Current.Text, pattern)
-			}
-			if isMatch {
-				to <- &Match{
-					MatchStr:    pattern,
-					LinesBefore: line.LinesBefore,
-					LinesAfter:  line.LinesAfter,
-					Line: &FileLine{
-						Text: line.Current.Text,
-						Num:  line.Current.Num,
-					},
-				}
+		if match := findMatch(line.Current.Text, pattern); match != "" {
+			to <- &Match{
+				MatchStr:    match,
+				LinesBefore: line.LinesBefore,
+				LinesAfter:  line.LinesAfter,
+				Line: &FileLine{
+					Text: line.Current.Text,
+					Num:  line.Current.Num,
+				},
 			}
 		}
 	}
 
 	close(to)
+}
+
+func findMatch(s string, pattern string) (match string) {
+	if opts.UseRegex {
+		r := regexp.MustCompile(pattern)
+		finds := r.FindAllString(s, -1)
+		if finds != nil {
+			return finds[0]
+		}
+	} else {
+		if opts.NoCase && strings.Contains(strings.ToLower(s), strings.ToLower(pattern)) {
+			return pattern
+		} else if strings.Contains(s, pattern) {
+			return pattern
+		}
+	}
+	return ""
 }
 
 type contextualLine struct {
