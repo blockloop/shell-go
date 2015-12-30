@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	isStdin   = false
 	printSync = &sync.Mutex{}
 	opts      = &Options{}
 
@@ -30,6 +31,7 @@ func init() {
 	getopt.BoolVar(&opts.NoCase, 'i', "ignore case when searching")
 	getopt.BoolVarLong(&opts.ListFiles, "list", 'l', "only list files where match is found")
 	getopt.BoolVarLong(&color.NoColor, "no-color", 'c', "don't colorize anything")
+	getopt.BoolVarLong(&opts.NoFileName, "no-filename", 'f', "don't output filenames")
 
 	getopt.IntVarLong(&opts.Context, "context", 'C', "show N lines of context on each side")
 }
@@ -41,7 +43,7 @@ func main() {
 	wg.Add(len(files))
 
 	for _, file := range files {
-		go func(f string) {
+		go func(f *os.File) {
 			processFile(f, pattern)
 			wg.Done()
 		}(file)
@@ -50,13 +52,7 @@ func main() {
 	wg.Wait()
 }
 
-func processFile(file string, pattern string) {
-	if _, err := os.Stat(file); os.IsNotExist(err) || os.IsPermission(err) {
-		printSync.Lock()
-		fmt.Println("ERROR: file does not exist or you do not have permission to open it:", file)
-		printSync.Unlock()
-		return
-	}
+func processFile(file *os.File, pattern string) {
 	matches := make(chan *Match)
 
 	go grepFile(file, pattern, matches)
@@ -72,24 +68,30 @@ func processFile(file string, pattern string) {
 		return
 	}
 
-	result := fmt.Sprintf("%s:\n", color.GreenString(file))
+	result := ""
+	if !isStdin && !opts.NoFileName {
+		result += fmt.Sprintf("%s:\n", color.GreenString(file.Name()))
+	}
 	hasMatches := false
 	for match := range matches {
 		hasMatches = true
 
 		for _, l := range match.LinesBefore {
 			if l != nil {
-				result += fmt.Sprintf("  %s- %s", color.YellowString("%d", l.Num), l.Text)
+				// TODO trim line and add line ending
+				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
 			}
 		}
 
 		lineNum := color.YellowString(strconv.Itoa(match.Line.Num))
 		text := strings.Replace(match.Line.Text, match.MatchStr, yellowBg(match.MatchStr), -1)
-		result += fmt.Sprintf("  %s: %s", lineNum, text)
+		// TODO trim line and add line ending
+		result += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
 
 		for _, l := range match.LinesAfter {
 			if l != nil {
-				result += fmt.Sprintf("  %s- %s", color.YellowString("%d", l.Num), l.Text)
+				// TODO trim line and add line ending
+				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
 			}
 		}
 	}
@@ -100,7 +102,7 @@ func processFile(file string, pattern string) {
 	}
 }
 
-func parseArgs() (pattern string, files []string) {
+func parseArgs() (pattern string, files []*os.File) {
 	getopt.Parse()
 	args := getopt.Args()
 
@@ -116,15 +118,26 @@ func parseArgs() (pattern string, files []string) {
 		getopt.Usage()
 		os.Exit(0)
 	}
-	if len(args) < 2 {
+	if len(args) == 0 {
 		getopt.Usage()
 		os.Exit(1)
 	}
-
-	return args[0], args[1:]
+	if len(args) == 1 {
+		isStdin = true
+		files = append(files, os.Stdin)
+	} else {
+		for _, f := range args[1:] {
+			if fl, err := os.Open(f); err == nil {
+				files = append(files, fl)
+			} else {
+				fmt.Println("warning:", err.Error())
+			}
+		}
+	}
+	return args[0], files
 }
 
-func grepFile(file string, pattern string, to chan<- *Match) {
+func grepFile(file *os.File, pattern string, to chan<- *Match) {
 	if opts.UseRegex && opts.NoCase {
 		pattern = "(?i)" + pattern
 	}
@@ -185,7 +198,7 @@ type contextualLine struct {
 	Current     *FileLine
 }
 
-func readContextualFile(file string, contextLen int, to chan<- *contextualLine) {
+func readContextualFile(file *os.File, contextLen int, to chan<- *contextualLine) {
 	// ring to hold buffer before and after and current line
 	buffer := ring.New(contextLen*2 + 1)
 
@@ -231,14 +244,10 @@ func readContextualFile(file string, contextLen int, to chan<- *contextualLine) 
 	close(to)
 }
 
-func readFile(file string, to chan<- *FileLine) {
-	f, err := os.Open(file)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
+func readFile(file *os.File, to chan<- *FileLine) {
+	defer file.Close()
 
-	freader := bufio.NewReader(f)
+	freader := bufio.NewReader(file)
 	for i := 1; ; i++ {
 		line, _, er := freader.ReadLine()
 		if er != nil {
@@ -257,6 +266,7 @@ type Options struct {
 	ListFiles   bool
 	Context     int
 	Debug       bool
+	NoFileName  bool
 }
 
 // FileLine is a line from a file
