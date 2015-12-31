@@ -69,33 +69,33 @@ func processFile(file *os.File, pattern string) {
 		return
 	}
 
-	result := ""
-	if !isStdin && !opts.NoFileName {
-		result += fmt.Sprintf("%s:\n", color.GreenString(file.Name()))
-	}
+	output := ""
 	hasMatches := false
 	for match := range matches {
 		hasMatches = true
 
 		for _, l := range match.LinesBefore {
 			if l != nil {
-				result += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
+				output += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
 			}
 		}
 
 		lineNum := color.YellowString("%d", match.Line.Num)
 		text := strings.Replace(match.Line.Text, match.MatchStr, yellowBg(match.MatchStr), -1)
-		result += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
+		output += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
 
 		for _, l := range match.LinesAfter {
 			if l != nil {
-				result += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
+				output += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
 			}
 		}
 	}
 	if hasMatches {
 		printSync.Lock()
-		fmt.Println(result)
+		if !isStdin && !opts.NoFileName {
+			fmt.Println(color.GreenString(file.Name() + ":"))
+		}
+		fmt.Println(output)
 		printSync.Unlock()
 	}
 }
