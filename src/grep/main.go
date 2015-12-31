@@ -79,7 +79,7 @@ func processFile(file *os.File, pattern string) {
 
 		for _, l := range match.LinesBefore {
 			if l != nil {
-				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
+				result += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
 			}
 		}
 
@@ -89,7 +89,7 @@ func processFile(file *os.File, pattern string) {
 
 		for _, l := range match.LinesAfter {
 			if l != nil {
-				result += fmt.Sprintf("  %s- %s\n", color.YellowString("%d", l.Num), strings.TrimSpace(l.Text))
+				result += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
 			}
 		}
 	}
