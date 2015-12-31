@@ -33,6 +33,8 @@ func init() {
 	getopt.BoolVarLong(&opts.NoFileName, "no-filename", 'f', "don't output filenames")
 
 	getopt.IntVarLong(&opts.Context, "context", 'C', "show N lines of context on each side")
+	getopt.IntVarLong(&opts.BeforeContext, "before", 'B', "show N lines of context before matches")
+	getopt.IntVarLong(&opts.AfterContext, "after", 'A', "show N lines of context after matches")
 }
 
 func main() {
@@ -130,6 +132,12 @@ func parseArgs() (pattern string, files []*os.File) {
 			}
 		}
 	}
+
+	// this makes things easier later
+	if opts.Context > 0 {
+		opts.BeforeContext = opts.Context
+		opts.AfterContext = opts.Context
+	}
 	return args[0], files
 }
 
@@ -138,7 +146,8 @@ func grepFile(file *os.File, pattern string, to chan<- *Match) {
 		pattern = "(?i)" + pattern
 	}
 	linesChan := make(chan *contextualLine)
-	go readContextualFile(file, opts.Context, linesChan)
+
+	go readContextualFile(file, linesChan)
 
 	for line := range linesChan {
 		if line == nil || line.Current == nil {
@@ -150,7 +159,7 @@ func grepFile(file *os.File, pattern string, to chan<- *Match) {
 				MatchStr:    match,
 				LinesBefore: line.LinesBefore,
 				LinesAfter:  line.LinesAfter,
-				Line: &FileLine{
+				Line: &fileLine{
 					Text: line.Current.Text,
 					Num:  line.Current.Num,
 				},
@@ -179,21 +188,22 @@ func findMatch(s string, pattern string) (match string) {
 }
 
 type contextualLine struct {
-	LinesBefore []*FileLine
-	LinesAfter  []*FileLine
-	Current     *FileLine
+	LinesBefore []*fileLine
+	LinesAfter  []*fileLine
+	Current     *fileLine
 }
 
-func readContextualFile(file *os.File, contextLen int, to chan<- *contextualLine) {
+func readContextualFile(file *os.File, to chan<- *contextualLine) {
 	// ring to hold buffer before and after and current line
-	buffer := ring.New(contextLen*2 + 1)
+	totalContext := opts.BeforeContext + opts.AfterContext
+	buffer := ring.New(totalContext + 1)
 
-	lineChan := make(chan *FileLine)
+	lineChan := make(chan *fileLine)
 	go func() {
 		readFile(file, lineChan)
 		// when the file is finished being read the last N lines will remain in the AFTER position
 		// so we push nils into the channel to move the last lines through the current line
-		for i := 0; i < contextLen; i++ {
+		for i := 0; i < totalContext; i++ {
 			lineChan <- nil
 		}
 		close(lineChan)
@@ -205,32 +215,36 @@ func readContextualFile(file *os.File, contextLen int, to chan<- *contextualLine
 		buffer.Value = line
 		buffer = buffer.Next()
 
-		if line != nil && line.Num <= contextLen {
+		if line != nil && line.Num <= totalContext {
 			// don't have enough buffer, wait for more
 			continue
 		}
 
-		allLines := make([]*FileLine, contextLen*2+1)
-		i := 0
+		// start with -1 because i++ is used at the beginning of the Do loop so it can't be missed
+		i := -1
 		buffer.Do(func(b interface{}) {
-			var fl *FileLine
-			if b != nil {
-				fl = b.(*FileLine)
-			}
-			allLines[i] = fl
 			i++
+			var fl *fileLine
+			if b != nil {
+				fl = b.(*fileLine)
+			}
+			if i < opts.BeforeContext {
+				res.LinesBefore = append(res.LinesBefore, fl)
+				return
+			}
+			if i == opts.BeforeContext {
+				res.Current = fl
+				return
+			}
+			res.LinesAfter = append(res.LinesAfter, fl)
 		})
-
-		res.LinesBefore = allLines[:contextLen]
-		res.Current = allLines[contextLen]
-		res.LinesAfter = allLines[contextLen+1:]
 
 		to <- res
 	}
 	close(to)
 }
 
-func readFile(file *os.File, to chan<- *FileLine) {
+func readFile(file *os.File, to chan<- *fileLine) {
 	defer file.Close()
 
 	freader := bufio.NewReader(file)
@@ -239,32 +253,33 @@ func readFile(file *os.File, to chan<- *FileLine) {
 		if er != nil {
 			break
 		}
-		to <- &FileLine{Num: i, Text: string(line)}
+		to <- &fileLine{Num: i, Text: string(line)}
 	}
 }
 
 // Options from the command line
 type Options struct {
-	ShowHelp    bool
-	ShowVersion bool
-	UseRegex    bool
-	NoCase      bool
-	ListFiles   bool
-	Context     int
-	Debug       bool
-	NoFileName  bool
+	ShowHelp      bool
+	ShowVersion   bool
+	UseRegex      bool
+	NoCase        bool
+	ListFiles     bool
+	Context       int
+	AfterContext  int
+	BeforeContext int
+	Debug         bool
+	NoFileName    bool
 }
 
-// FileLine is a line from a file
-type FileLine struct {
+type fileLine struct {
 	Text string
 	Num  int
 }
 
 // Match is a matching line from a file
 type Match struct {
-	Line        *FileLine
+	Line        *fileLine
 	MatchStr    string
-	LinesBefore []*FileLine
-	LinesAfter  []*FileLine
+	LinesBefore []*fileLine
+	LinesAfter  []*fileLine
 }
