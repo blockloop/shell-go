@@ -111,13 +111,11 @@ func lineFmt(fname string, l fileLine, matchStr string) string {
 		parts = append(parts, fmt.Sprintf("%d", l.Num))
 	}
 
-	output := strings.Join(parts, ":")
-
+	sep := ":"
 	if matchStr == "" {
-		output += "- "
-	} else {
-		output += ": "
+		sep = "-"
 	}
+	output := strings.Join(parts, sep) + sep
 
 	if opts.OnlyMatching {
 		output += matchStr
