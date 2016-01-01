@@ -18,19 +18,24 @@ var (
 	printSync = &sync.Mutex{}
 	opts      = &Options{}
 
-	yellowBg = color.New(color.FgBlack, color.BgYellow).SprintfFunc()
+	hl = color.New(color.FgRed).SprintfFunc()
 )
 
 func init() {
-	getopt.BoolVarLong(&opts.ShowHelp, "help", 'h', "show help information and usage")
-	getopt.BoolVarLong(&opts.ShowVersion, "version", 'V', "show version information")
-	getopt.BoolVarLong(&opts.Debug, "debug", 'D', "show debug information")
+	// initial value of NO color, like grep
+	color.NoColor = true
 
-	getopt.BoolVarLong(&opts.UseRegex, "regexp", 'R', "match pattern as regexp")
-	getopt.BoolVar(&opts.NoCase, 'i', "ignore case when searching")
-	getopt.BoolVarLong(&opts.ListFiles, "list", 'l', "only list files where match is found")
-	getopt.BoolVarLong(&color.NoColor, "no-color", 'c', "don't colorize anything")
-	getopt.BoolVarLong(&opts.NoFileName, "no-filename", 'f', "don't output filenames")
+	getopt.BoolVarLong(&opts.ShowHelp, "help", 'p', "show help information and usage")
+	getopt.BoolVarLong(&opts.ShowVersion, "version", 'V', "show version information")
+
+	getopt.BoolVarLong(&opts.UseRegex, "regexp", 'e', "match pattern as regexp")
+	getopt.BoolVarLong(&opts.IgnoreCase, "ignore-case", 'i', "ignore case when searching")
+	getopt.BoolVarLong(&opts.ListFiles, "files-with-matches", 'l', "only list files, not content")
+	getopt.BoolVarLong(&opts.Color, "color", 'c', "colorize output")
+	getopt.BoolVarLong(&opts.NoFileName, "no-filename", 'h', "don't output filenames")
+	getopt.BoolVarLong(&opts.FileName, "filename", 'H', "output filenames (default if more than one file)")
+	getopt.BoolVarLong(&opts.LineNums, "line-number", 'n', "show line numbers")
+	getopt.BoolVarLong(&opts.InvertMatch, "invert-match", 'v', "invert the sense of matching, to select non-matching lines")
 
 	getopt.IntVarLong(&opts.Context, "context", 'C', "show N lines of context on each side")
 	getopt.IntVarLong(&opts.BeforeContext, "before", 'B', "show N lines of context before matches")
@@ -70,34 +75,59 @@ func processFile(file *os.File, pattern string) {
 	}
 
 	output := ""
-	hasMatches := false
+	fname := file.Name()
 	for match := range matches {
-		hasMatches = true
-
 		for _, l := range match.LinesBefore {
 			if l != nil {
-				output += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
+				output += lineFmt(fname, *l, "")
 			}
 		}
 
-		lineNum := color.YellowString("%d", match.Line.Num)
-		text := strings.Replace(match.Line.Text, match.MatchStr, yellowBg(match.MatchStr), -1)
-		output += fmt.Sprintf("  %s: %s\n", lineNum, strings.TrimSpace(text))
+		output += lineFmt(fname, *match.Line, match.MatchStr)
 
 		for _, l := range match.LinesAfter {
 			if l != nil {
-				output += fmt.Sprintf("  %d- %s\n", l.Num, strings.TrimSpace(l.Text))
+				output += lineFmt(fname, *l, "")
 			}
 		}
-	}
-	if hasMatches {
-		printSync.Lock()
-		if !isStdin && !opts.NoFileName {
-			fmt.Println(color.GreenString(file.Name() + ":"))
+		if opts.BeforeContext+opts.AfterContext > 0 {
+			output += "--\n--\n"
 		}
+	}
+	output = strings.TrimRight(output, "--\n--\n")
+	if output != "" {
+		printSync.Lock()
 		fmt.Println(output)
 		printSync.Unlock()
 	}
+}
+
+func lineFmt(fname string, l fileLine, matchStr string) string {
+	var parts []string
+	if !opts.NoFileName {
+		parts = append(parts, fname)
+	}
+	if opts.LineNums {
+		parts = append(parts, fmt.Sprintf("%d", l.Num))
+	}
+
+	output := strings.Join(parts, ":")
+
+	if matchStr == "" {
+		output += "- "
+	} else {
+		output += ": "
+	}
+
+	if opts.OnlyMatching {
+		output += matchStr
+	} else {
+		if opts.Color {
+			l.Text = strings.Replace(l.Text, matchStr, hl(matchStr), -1)
+		}
+		output += fmt.Sprintf("%s", l.Text)
+	}
+	return output + "\n"
 }
 
 func parseArgs() (pattern string, files []*os.File) {
@@ -120,6 +150,15 @@ func parseArgs() (pattern string, files []*os.File) {
 		getopt.Usage()
 		os.Exit(0)
 	}
+
+	if opts.Color {
+		color.NoColor = false
+	}
+	if len(files) == 1 && !opts.FileName {
+		opts.NoFileName = true
+	}
+
+	// parse pattern and file from remaining arguments
 	if len(args) == 1 {
 		isStdin = true
 		files = append(files, os.Stdin)
@@ -142,19 +181,22 @@ func parseArgs() (pattern string, files []*os.File) {
 }
 
 func grepFile(file *os.File, pattern string, to chan<- *Match) {
-	if opts.UseRegex && opts.NoCase {
+	if opts.UseRegex && opts.IgnoreCase {
 		pattern = "(?i)" + pattern
 	}
-	linesChan := make(chan *contextualLine)
+	lines := make(chan *contextualLine)
 
-	go readContextualFile(file, linesChan)
+	go readContextualFile(file, lines)
 
-	for line := range linesChan {
+	for line := range lines {
 		if line == nil || line.Current == nil {
 			continue
 		}
 
-		if match := findMatch(line.Current.Text, pattern); match != "" {
+		match := findMatch(line.Current.Text, pattern)
+
+		// XOR - either Invert or it is a match, but not both
+		if opts.InvertMatch != (match != "") {
 			to <- &Match{
 				MatchStr:    match,
 				LinesBefore: line.LinesBefore,
@@ -178,7 +220,7 @@ func findMatch(s string, pattern string) (match string) {
 			return finds[0]
 		}
 	} else {
-		if opts.NoCase && strings.Contains(strings.ToLower(s), strings.ToLower(pattern)) {
+		if opts.IgnoreCase && strings.Contains(strings.ToLower(s), strings.ToLower(pattern)) {
 			return pattern
 		} else if strings.Contains(s, pattern) {
 			return pattern
@@ -259,16 +301,20 @@ func readFile(file *os.File, to chan<- *fileLine) {
 
 // Options from the command line
 type Options struct {
+	Color         bool
 	ShowHelp      bool
 	ShowVersion   bool
 	UseRegex      bool
-	NoCase        bool
+	IgnoreCase    bool
+	InvertMatch   bool
 	ListFiles     bool
+	LineNums      bool
+	OnlyMatching  bool
 	Context       int
 	AfterContext  int
 	BeforeContext int
-	Debug         bool
 	NoFileName    bool
+	FileName      bool
 }
 
 type fileLine struct {
