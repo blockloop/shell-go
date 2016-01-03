@@ -36,6 +36,7 @@ func init() {
 	getopt.BoolVarLong(&opts.FileName, "filename", 'H', "output filenames (default if more than one file)")
 	getopt.BoolVarLong(&opts.LineNums, "line-number", 'n', "show line numbers")
 	getopt.BoolVarLong(&opts.InvertMatch, "invert-match", 'v', "invert the sense of matching, to select non-matching lines")
+	getopt.BoolVarLong(&opts.Quiet, "quiet", 'q', "invert the sense of matching, to select non-matching lines")
 
 	getopt.IntVarLong(&opts.Context, "context", 'C', "show N lines of context on each side")
 	getopt.IntVarLong(&opts.BeforeContext, "before", 'B', "show N lines of context before matches")
@@ -56,6 +57,13 @@ func main() {
 	}
 
 	wg.Wait()
+
+	// if we've made it this far then no matches were found and if Quiet is specified
+	// we need to exit 1
+	if opts.Quiet {
+		os.Exit(1)
+	}
+
 }
 
 func processFile(file *os.File, pattern string) {
@@ -63,9 +71,13 @@ func processFile(file *os.File, pattern string) {
 
 	go grepFile(file, pattern, matches)
 
-	if opts.ListFiles {
+	if opts.ListFiles || opts.Quiet {
 		// if a match is returned then print the file name and move on
 		if <-matches != nil {
+			// if the file has a match and the user has specified Quiet then exit 0
+			if opts.Quiet {
+				os.Exit(0)
+			}
 			printSync.Lock()
 			fmt.Println(file)
 			printSync.Unlock()
@@ -299,20 +311,21 @@ func readFile(file *os.File, to chan<- *fileLine) {
 
 // Options from the command line
 type Options struct {
+	AfterContext  int
+	BeforeContext int
 	Color         bool
+	Context       int
+	FileName      bool
+	IgnoreCase    bool
+	InvertMatch   bool
+	LineNums      bool
+	ListFiles     bool
+	NoFileName    bool
+	OnlyMatching  bool
+	Quiet         bool
 	ShowHelp      bool
 	ShowVersion   bool
 	UseRegex      bool
-	IgnoreCase    bool
-	InvertMatch   bool
-	ListFiles     bool
-	LineNums      bool
-	OnlyMatching  bool
-	Context       int
-	AfterContext  int
-	BeforeContext int
-	NoFileName    bool
-	FileName      bool
 }
 
 type fileLine struct {
